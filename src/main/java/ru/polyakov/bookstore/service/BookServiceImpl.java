@@ -2,7 +2,12 @@ package ru.polyakov.bookstore.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import ru.polyakov.bookstore.exception.BadRequestException;
 import ru.polyakov.bookstore.exception.NotFoundException;
 import ru.polyakov.bookstore.model.Book;
@@ -22,26 +27,33 @@ public class BookServiceImpl implements BookService{
 
     private final BookRepository bookRepository;
     private final CategoryRepository categoryRepository;
+    private final RedisTemplate<String, Object> redisTemplate;
     private final EntityUpdater updater;
 
+    @Cacheable(cacheNames = "book", key = "#id")
+    @Transactional(readOnly = true)
     @Override
     public Book findById(Long id) {
-        log.info("try to find book by id {}", id);
         return findByIdAndCheck(id);
     }
 
+    @Cacheable(cacheNames = "bookByNameAndAuthor", key = "#name + #author")
+    @Transactional(readOnly = true)
     @Override
     public Book findByAuthorAndName(String name, String author) {
-        log.info("try to find book by name {} and author {}", name, author);
         return bookRepository.findByNameAndAuthor(name, author).orElseThrow(
                 () -> new NotFoundException(format("Книга под названием %s автора %s не найдена", name, author)));
     }
 
+    @Cacheable(cacheNames = "books", key = "#categoryName")
+    @Transactional(readOnly = true)
     @Override
     public List<Book> findByCategory(String categoryName) {
         return bookRepository.findByCategoryName(categoryName);
     }
 
+    @CacheEvict(cacheNames = "books", key = "#categoryName")
+    @Transactional
     @Override
     public Book save(Book request, String categoryName) {
         checkForUniqueBook(request.getName(), request.getAuthor());
@@ -50,19 +62,31 @@ public class BookServiceImpl implements BookService{
         return bookRepository.save(request);
     }
 
+    @CacheEvict(cacheNames = "book", key = "#id")
+    @Transactional
     @Override
     public Book updateById(Long id, Book request, String categoryName) {
         checkForUniqueBook(request.getName(), request.getAuthor());
         Book fromDb = findByIdAndCheck(id);
-        Category category = findOrCreateCategory(categoryName);
-        fromDb.setCategory(category);
+        if(categoryName != null) {
+            Category category = findOrCreateCategory(categoryName);
+            fromDb.setCategory(category);
+        } else {
+            redisTemplate.delete(format("books::%s", fromDb.getCategory().getName()));
+        }
+        String key = format("bookByNameAndAuthor::%s%s", fromDb.getName(), fromDb.getAuthor());
+        redisTemplate.delete(key);
         updater.update(fromDb, request);
         return bookRepository.save(fromDb);
     }
 
+    @CacheEvict(cacheNames = "book", key = "#id")
+    @Transactional
     @Override
     public void deleteById(Long id) {
         Book book = findByIdAndCheck(id);
+        redisTemplate.delete(format("bookByNameAndAuthor::%s%s", book.getName(), book.getAuthor()));
+        redisTemplate.delete(format("books::%s", book.getCategory().getName()));
         bookRepository.delete(book);
     }
 

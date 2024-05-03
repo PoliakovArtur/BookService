@@ -9,6 +9,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 import java.io.Serializable;
 import java.util.List;
@@ -25,6 +26,7 @@ public class Category implements Serializable {
 
     private String name;
 
+    @ToString.Exclude
     @OneToMany(mappedBy = "category")
     private List<Book> books;
 }
